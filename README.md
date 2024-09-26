@@ -1,6 +1,6 @@
 <div align="center">
 
-# Infusing Self-Consistency into Quantum Hamiltonian Prediction via Deep Equilibrium Models
+# Infusing Self-Consistency into Density Functional Theory Hamiltonian Prediction via Deep Equilibrium Models
 
 
 [![python](https://img.shields.io/badge/-Python_3.7_%7C_3.8_%7C_3.9_%7C_3.10-blue?logo=python&logoColor=white)](https://github.com/pre-commit/pre-commit)
@@ -12,7 +12,7 @@
 
 ## 📌  Introduction
 
-Infusing Self-Consistency into Quantum Hamiltonian Prediction via Deep Equilibrium Models
+Infusing Self-Consistency into Density Functional Theory Hamiltonian Prediction via Deep Equilibrium Models.
 
 
 ## 🚀  Quickstart
@@ -56,12 +56,12 @@ python src/QHNet/train_wH.py dataset=uracil model=QHNet model.version=DEQHNet
 ## Citation
 ```
 @inproceedings{
-anonymous2024infusing,
-title={Infusing Self-Consistency into Quantum Hamiltonian Prediction via Deep Equilibrium Models},
-author={Anonymous},
-booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
-year={2024},
-url={https://openreview.net/forum?id=PSVkinBs4u}
+  anonymous2024infusing,
+  title={Infusing Self-Consistency into Quantum Hamiltonian Prediction via Deep Equilibrium Models},
+  author={Anonymous},
+  booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+  year={2024},
+  url={https://openreview.net/forum?id=PSVkinBs4u}
 }
 ```
 
