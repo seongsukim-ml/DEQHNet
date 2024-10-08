@@ -55,14 +55,7 @@ python src/QHNet/train_wH.py dataset=uracil model=QHNet model.version=DEQHNet
 
 ## Citation
 ```
-@inproceedings{
-  anonymous2024infusing,
-  title={Infusing Self-Consistency into Quantum Hamiltonian Prediction via Deep Equilibrium Models},
-  author={Anonymous},
-  booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
-  year={2024},
-  url={https://openreview.net/forum?id=PSVkinBs4u}
-}
+TBD
 ```
 
 
