@@ -55,7 +55,13 @@ python src/QHNet/train_wH.py dataset=uracil model=QHNet model.version=DEQHNet
 
 ## Citation
 ```
-TBD
+@inproceedings{wang2024infusing,
+  title={Infusing Self-Consistency into Density Functional Theory Hamiltonian Prediction via Deep Equilibrium Models},
+  author={Wang, Zun and Liu, Chang and Zou, Nianlong and Zhang, He and Wei, Xinran and Huang, Lin and Wu, Lijun and Shao, Bin},
+  booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+  year={2024},
+  url={https://openreview.net/forum?id=PSVkinBs4u}
+}
 ```
 
 
