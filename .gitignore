@@ -5,6 +5,13 @@ outputs/
 *.db
 *.tgz
 data.pt
+pre_filter.pt
+pre_transform.pt
+processed/
+raw/
+
+water_RLROP.pt
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

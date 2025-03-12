@@ -1,0 +1,79 @@
+hydra:
+  run:
+    dir: outputs/${dataset.dataset_name}/${model.version}${prefix}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+
+defaults:
+  - model: QHNet_consistent_refinement
+  - dataset: water
+device: 0
+ckpt_dir: 'checkpoints'
+split_seed: 42
+check_val_every_n_epoch: 10
+
+optimizer: adamW
+decay_factor: 0.5
+decay_patience: 5
+ema_start_epoch: 40  # 40 for water, and 0 for others
+
+warmup_step: 1000
+num_training_steps: 200000
+end_lr: 1e-9
+scheduler_power: 3.5
+
+data_type: float64
+
+loss_weights: {
+    "hamiltonian_mae": 1.0,
+    "hamiltonian_mse": 1.0,
+    "refinement_mae":  5.0,
+    "refinement_mse":  5.0,
+}
+
+# loss_weights: {
+#     "consistent_mae": 1.0,
+#     "consistent_mse": 1.0,
+# }
+
+# pl_type : "consistent_loss2"
+prefix: ""
+
+wandb:
+  mode: disabled
+  project: "DFT-hamiltonian_V2"
+  run_name: ${model.version}${prefix}-${dataset.dataset_name}
+  run_id: Null
+  tags: ["Consistent", "Refinement"]
+  # resume: must
+
+# resume  
+continune_ckpt: ''
+# inference
+model_ckpt: ''
+
+consistent:
+  max_T: 15
+  batch_mul: 1
+  loss_type: 1
+
+refinement:
+  train_noise_scale: 0.0 # 1e-6 is applicable I think
+  start_scf_idx: 1
+  low_t: 0.5
+
+inf_model:
+  model:
+    model_name: QHNet
+    version: Real_QHNet
+
+    hidden_size: 196
+    bottle_hidden_size: 32
+
+  optimizer: adamW
+  data_type: float64
+  loss_weights : Null # Not used
+
+  use_init_hamiltonian: True 
+  use_init_hamiltonian_residue: True
+  # version: QHNet_wo_bias, QHNet_w_bias, QHNet
+  ckpt_path:  /home/seongsukim/dft/DEQHNet/src/QHNet_flow/outputs/water/Real_QHNet/2025-03-03/02-40-06/DFT-hamiltonian_V2/2lnd0dpl/checkpoints/best-epoch=3829.ckpt

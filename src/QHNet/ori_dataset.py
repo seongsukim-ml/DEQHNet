@@ -10,8 +10,7 @@ from argparse import Namespace
 from torch_geometric.data import InMemoryDataset, download_url
 
 import logging
-
-from .utils import AOData, Onsite_3idx_Overlap_Integral, build_molecule, build_AO_index
+from utils import AOData, Onsite_3idx_Overlap_Integral, build_molecule, build_AO_index
 
 
 logger = logging.getLogger()
@@ -146,6 +145,7 @@ class MD17_DFT(InMemoryDataset):
         self.orbitals_ref = orbitals_ref
 
         orbitals = []
+        assert name in ['water', 'ethanol', 'malondialdehyde', 'uracil', 'aspirin']
         if name == 'water':
             atoms = [8, 1, 1]
             atom_list = ['O', 'H']

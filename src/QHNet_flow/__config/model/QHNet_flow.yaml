@@ -1,0 +1,6 @@
+model_name: QHNet_flow
+version: QHNet_flow_v4
+# version: QHNet_wo_bias, QHNet_w_bias, QHNet
+
+model.sh_lmax: 4
+model.hidden_dim: 128

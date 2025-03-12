@@ -34,15 +34,44 @@ pip install torch==2.1.2 --index-url https://download.pytorch.org/whl/cu121
 pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
 pip install torch_geometric==2.3.0
 
-pip install pytorch-lightning==1.8.3
+pip install pytorch-lightning==1.8.5
 
-pip install pyscf==2.2.1
-conda install psi4 python=3.9 -c conda-forge
+# pip install pyscf==2.2.1
+pip install hydra-core
+# conda install psi4 python=3.9 -c conda-forge
 
-pip install requirements.txt
+pip install -r requirements.txt
+pip install scipy==1.10
+pip install pydantic==1.10.21
 
 pip install -e .
 ```
+
+``` bash
+conda create -n p4_cu124_2 python=3.9 psi4 pyscf pytorch==2.5.0 torchvision==0.20.1 torchaudio==2.5.0 pytorch-cuda=12.4 -c pytorch -c nvidia  -c pyscf
+
+# conda install -c pyscf -c conda-forge pyscf
+# conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
+pip install torch_geometric
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.5.0+cu124.html
+pip install pytorch-lightning
+pip install hydra-core
+pip install ase
+pip install torch_ema tqdm wandb PyYAML
+pip install e3nn gdown transformers tensorboard torchdeq lmdb
+```
+``` bash
+conda create -n p4_pyscf23 python=3.9 psi4 pyscf==2.3.0 -c nvidia  -c pyscf
+pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
+pip install pytorch-lightning
+pip install hydra-core
+pip install ase
+pip install torch_ema tqdm wandb PyYAML
+pip install e3nn gdown transformers tensorboard torchdeq lmdb
+```
+
+
 
 Train DEQHNet, e.g., 
 ```bash

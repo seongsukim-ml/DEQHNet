@@ -1,0 +1,25 @@
+hydra:
+  run:
+    dir: outputs/eval/${model.version}${prefix}-${dataset.dataset_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+defaults:
+  - model: QHNet
+  - dataset: water
+device: 0
+ckpt_dir: 'checkpoints'
+split_seed: 42
+optimizer: adam
+decay_factor: 0.5
+decay_patience: 5
+ema_start_epoch: 40  # 40 for water, and 0 for others
+warmup_step: 1000
+num_training_steps: 200000
+end_lr: 1e-8
+data_type: float64
+# model_path: /home/seongsukim/dft/DEQHNet/src/QHNet_flow/outputs/2025-02-22/00-03-09/DFT-hamiltonian/a2j6vkvw/checkpoints/last.ckpt
+model_path: /home/seongsukim/dft/DEQHNet/src/QHNet_flow/outputs/2025-02-22/00-03-09/DFT-hamiltonian/a2j6vkvw/checkpoints/best-epoch=31514-val_hamiltonian_mae=0.00000000.ckpt
+wandb_project: "DFT-hamiltonian"
+wandb_run_name: ${model.version}${prefix}-${dataset.dataset_name}-UH_${use_init_hamiltonian}-UR_${use_init_hamiltonian_residue}
+prefix: ""
+use_init_hamiltonian: True
+use_init_hamiltonian_residue: false
