@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: outputs/cont-${dataset.dataset_full_name}/${wandb.run_name}
+    dir: outputs/v3_cont-${dataset.dataset_full_name}/${wandb.run_name}
 
 
 defaults:
@@ -37,23 +37,25 @@ mode: train
 wandb:
   mode: disabled
   project: "DFT-hamiltonian_qh9"
-  run_name: ${model.version}${prefix}-${dataset.dataset_name}-UR_${use_init_hamiltonian_residue}_IG_${flow.init_gauss}_TS_${flow.use_t_scale}-US_${model.use_block_S}
+  run_name: ${model.version}${prefix}-${dataset.dataset_full_name}-UR_${use_init_hamiltonian_residue}_IG_${flow.init_gauss}_TS_${flow.use_t_scale}-US_${model.use_block_S}
   run_id: Null
-  tags: ["qh9","flow", "cont"]
+  tags: ["qh9","flow", "cont", "v3"]
   # resume: must
 
 # resume  
 continune_ckpt: ''
 # inference
 model_ckpt: ''
+partial_val: 0.25
 
 flow:
   batch_mul : 1
   use_t_scale: False
-  num_ode_steps_val: 20
   init_gauss: True
   init_gauss_center: False
   use_mse_and_mae: ${use_mse_and_mae}
   use_res_target: True
   error_threshold: 1e-3
   sigma: 0.1
+  num_ode_steps: 3
+  num_ode_steps_val: 3

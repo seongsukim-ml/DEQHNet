@@ -324,6 +324,48 @@ class LitModel(pl.LightningModule):
             "sample_hamiltonian": error_dict["hamiltonian"],
         }
 
+    def _orb_and_eng_error_qh9_fix(self, _outputs, _target):
+        total_error_dict = {"total_items": 0}
+        loss_weights = {
+            "hamiltonian": 1.0,
+            "orbital_energies": 1.0,
+            "orbital_coefficients": 1.0,
+        }
+        outputs = _outputs
+        target = _target.clone()
+
+        for key in outputs.keys():
+            if isinstance(outputs[key], torch.Tensor):
+                outputs[key] = outputs[key].to("cpu")
+
+        target = target.to("cpu")
+
+        outputs["orbital_energies"], outputs["orbital_coefficients"] = (
+            self.cal_orbital_and_energies(target["overlap"], outputs["hamiltonian"])
+        )
+        target.orbital_energies, target.orbital_coefficients = (
+            self.cal_orbital_and_energies(target["overlap"], target["hamiltonian"])
+        )
+
+        num_orb = int(target.atoms[target.ptr[0] : target.ptr[1]].sum() / 2)
+        (
+            outputs["orbital_energies"],
+            outputs["orbital_coefficients"],
+            target.orbital_energies,
+            target.orbital_coefficients,
+        ) = (
+            outputs["orbital_energies"][:, :num_orb],
+            outputs["orbital_coefficients"][:, :, :num_orb],
+            target.orbital_energies[:, :num_orb],
+            target.orbital_coefficients[:, :, :num_orb],
+        )
+        error_dict = self.criterion_test(outputs, target, loss_weights)
+        return {
+            "orbital_energies": error_dict["orbital_energies"],
+            "orbital_coefficients": error_dict["orbital_coefficients"],
+            "sample_hamiltonian": error_dict["hamiltonian"],
+        }
+
     def configure_optimizers(self):
         torch.set_default_dtype(self.default_type)
         if self.conf.optimizer.lower() == "AdamW".lower():

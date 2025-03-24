@@ -47,6 +47,7 @@ wandb:
 continune_ckpt: ''
 # inference
 model_ckpt: ''
+partial_val: 0.25
 
 flow:
   batch_mul : 1
@@ -58,3 +59,5 @@ flow:
   use_res_target: True
   error_threshold: 1e-3
   sigma: 0.1
+  num_ode_steps: 3
+  num_ode_steps_val: 3

@@ -653,32 +653,11 @@ class QH9Dynamic(InMemoryDataset):
     ):
         if self.version == "300k":
             # assert pyscf.__version__ == "2.2.1"  # pyscf (2.2.1) (QH9-Dynamic-300k)
-            num_mol = 2998
+            num_mol = 2698
+            # num_mol = 2998
         elif self.version == "100k":
             # assert pyscf.__version__ == "2.3.0"  # pyscf (2.3.0) (QH9-Dynamic-100k)
             num_mol = 999
-
-        all_data = []
-        for raw_file_name in self.raw_file_names:
-            connection = Connection(os.path.join(self.root, "raw", raw_file_name))
-            cursor = connection.cursor()
-            data = cursor.execute("select * from data").fetchall()
-            connection.close()
-            all_data.extend(data)
-
-        num_total = len(all_data)
-        chunk_size = (num_total + (self.num_chunks - 1)) // self.num_chunks
-        start_idx = self.chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, num_total)
-
-        assert start_idx < end_idx and end_idx <= num_total
-        assert start_idx < num_total and start_idx >= 0
-        data_chunk = all_data[start_idx:end_idx]
-        print(f"Total data points: {num_total}")
-        print(
-            f"Processing chunk {self.chunk_idx+1}/{self.num_chunks} with {len(data_chunk)} data points."
-        )
-        print(f"Data range: {start_idx} ~ {end_idx}")
 
         lmdb_chunk_name = f"QH9Dynamic_{self.chunk_idx}.lmdb"
         lmdb_completed_chunk_name = f"QH9Dynamic_{self.chunk_idx}_completed.lmdb"
@@ -686,6 +665,28 @@ class QH9Dynamic(InMemoryDataset):
         lmdb_completed_chunk_path = os.path.join(self.db_dir, lmdb_completed_chunk_name)
 
         if not os.path.isdir(lmdb_completed_chunk_path):
+            all_data = []
+            for raw_file_name in self.raw_file_names:
+                connection = Connection(os.path.join(self.root, "raw", raw_file_name))
+                cursor = connection.cursor()
+                data = cursor.execute("select * from data").fetchall()
+                connection.close()
+                all_data.extend(data)
+
+            num_total = len(all_data)
+            chunk_size = (num_total + (self.num_chunks - 1)) // self.num_chunks
+            start_idx = self.chunk_idx * chunk_size
+            end_idx = min(start_idx + chunk_size, num_total)
+
+            assert start_idx < end_idx and end_idx <= num_total
+            assert start_idx < num_total and start_idx >= 0
+            data_chunk = all_data[start_idx:end_idx]
+            # fmt: off
+            print(f"Total data points: {num_total}")
+            print(f"Processing chunk {self.chunk_idx+1}/{self.num_chunks} with {len(data_chunk)} data points.")
+            print(f"Data range: {start_idx} ~ {end_idx}")
+            # fmt: on
+
             db_env = lmdb.open(lmdb_chunk_path, map_size=1048576000000)
             indices = np.arange(start_idx, end_idx)
             data_chunk_idx = list(zip(data_chunk, indices))
@@ -1068,8 +1069,17 @@ if __name__ == "__main__":
         import pdb
 
         pdb.set_trace()
+
+        num_total = len(dataset)
+        chunk_size = (num_total + (args.num_chunks - 1)) // args.num_chunks
+        idx = []
+        for i in range(args.num_chunks):
+            start_idx = i * chunk_size
+            end_idx = min(start_idx + chunk_size, num_total)
+            idx.append((start_idx, end_idx))
+
+        pdb.set_trace()
+
+    print(len(dataset))
     print(dataset[0])
     print(dataset[-1])
-    random_idx = np.random.randint(high=len(dataset), size=10)
-    for idx in random_idx:
-        print(dataset[idx])

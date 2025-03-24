@@ -24,7 +24,7 @@ data_type: float64
 
 loss_weights: {'hamiltonian': 1.0}
 use_init_hamiltonian: True
-use_init_hamiltonian_residue: False
+use_init_hamiltonian_residue: True
 
 prefix: ""
 

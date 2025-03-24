@@ -432,8 +432,10 @@ class QHNet_flow(nn.Module):
                 )
                 node_concat.append(node_feats_S)
 
-            node_concat = torch.cat(node_concat, dim=-1).index_select(
-                -1, self.hidden_irrep_concat_idx.to(node_attr_R.device)
+            node_concat = (
+                torch.cat(node_concat, dim=-1)
+                .index_select(-1, self.hidden_irrep_concat_idx.to(node_attr_R.device))
+                .contiguous()
             )
             node_attr_R = self.blocks_Linear[layer_idx](node_concat)
             node_attr_R = self.norm(node_attr_R, batch=data.batch)

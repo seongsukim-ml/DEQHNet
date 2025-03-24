@@ -30,6 +30,7 @@ cd DEQHNet
 
 # Recommed to install part of dependencies in advance
 # Take `cuda121` version as an example
+conda install -c conda-forge gxx_linux-64==11.1.0
 pip install torch==2.1.2 --index-url https://download.pytorch.org/whl/cu121
 pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
 pip install torch_geometric==2.3.0
@@ -43,12 +44,13 @@ pip install hydra-core
 pip install -r requirements.txt
 pip install scipy==1.10
 pip install pydantic==1.10.21
-
+pip install numpy==1.23
 pip install -e .
 ```
 
 ``` bash
-conda create -n p4_cu124_2 python=3.9 psi4 pyscf pytorch==2.5.0 torchvision==0.20.1 torchaudio==2.5.0 pytorch-cuda=12.4 -c pytorch -c nvidia  -c pyscf
+conda create -n p4_cu124_2 python=3.9 psi4 pyscf pytorch==2.5.0 torchvision==0.20.1 torchaudio==2.5.0 pytorch-cuda=12.4 -c pytorch -c nvidia  -c pyscf -c pyg
+
 
 # conda install -c pyscf -c conda-forge pyscf
 # conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
@@ -60,15 +62,24 @@ pip install ase
 pip install torch_ema tqdm wandb PyYAML
 pip install e3nn gdown transformers tensorboard torchdeq lmdb
 ```
+
+<!-- conda install pytorch3d -c pytorch3d
+pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121 -->
+
+
 ``` bash
-conda create -n p4_pyscf23 python=3.9 psi4 pyscf==2.3.0 -c nvidia  -c pyscf
-pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
-pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
-pip install pytorch-lightning
-pip install hydra-core
-pip install ase
-pip install torch_ema tqdm wandb PyYAML
-pip install e3nn gdown transformers tensorboard torchdeq lmdb
+conda create -n p4_QH4 python=3.9 pytorch==2.1.2 pytorch-cuda=12.1  psi4 pyscf=2.2.1 pytorch3d pytorch-lightning==1.8.5 -c pytorch -c nvidia -c pyscf -c pytorch3d 
+conda activate p4_QH4
+pip install torch_geometric==2.3.0
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html --no-cache-dir
+pip install pytorch-lightning==1.8.5
+# pip install hydra-core
+# pip install ase==3.22.1
+# pip install torch_ema tqdm wandb PyYAML
+# pip install e3nn gdown transformers tensorboard torchdeq lmdb
+pip install -r requirements.txt
+pip install scipy==1.10
+pip install pydantic==1.10.21
 ```
 
 
@@ -96,3 +107,28 @@ python src/QHNet/train_wH.py dataset=uracil model=QHNet model.version=DEQHNet
 
 ## Acknowledgements
 This project is based on the repo [AIRS](https://github.com/divelab/AIRS.git).
+
+
+## Final
+```bash
+conda create -n p4_QH2  python=3.9 psi4=1.7 pytorch3d  -c pytorch3d -c psi4 
+conda activate p4_QH2
+# conda install -c conda-forge gxx_linux-64==11.1.0
+# conda install -c conda-forge gcc=12.1.0
+pip install pyscf==2.2.1
+pip install torch==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
+pip install torch_geometric==2.3.0
+
+pip install pytorch-lightning==1.8.5
+
+# pip install pyscf==2.2.1
+pip install hydra-core
+# conda install psi4 python=3.9 -c conda-forge
+
+pip install -r requirements.txt
+pip install scipy==1.10
+pip install pydantic==1.10.21
+pip install numpy==1.23
+pip install pillow==11.0.0
+```

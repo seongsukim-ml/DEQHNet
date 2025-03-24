@@ -13,6 +13,7 @@ from utils import AOData
 import logging
 import time
 from tqdm import tqdm
+from torch_scatter import scatter_sum
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ class LitModel_flow(LitModel):
         super().__init__(conf=conf)
         self.batch_mul = conf.flow.get("batch_mul", 1)
         self.use_t_scale = conf.flow.get("use_t_scale", True)
-        self.num_ode_steps = conf.flow.get("num_ode_steps", 10)
-        self.num_ode_steps_val = conf.flow.get("num_ode_steps_val", 10)
+        self.num_ode_steps = conf.flow.get("num_ode_steps", 3)
+        self.num_ode_steps_val = conf.flow.get("num_ode_steps_val", 3)
         self.num_ode_steps_inf = conf.flow.get(
             "num_ode_steps_inf", self.num_ode_steps_val
         )
@@ -41,6 +42,7 @@ class LitModel_flow(LitModel):
         self.sample_random = conf.flow.get("sample_random", False)
 
         self.save_hyperparameters()
+        self.batch_size = conf.dataset.get("batch_size", 32)
 
     def batch_repeat(self, batch, mul=1, repeat_style="repeat"):
         if mul == 1:
@@ -182,11 +184,95 @@ class LitModel_flow(LitModel):
         self, outputs, target, loss_weights, use_t_scale=False, use_mse_and_mae=False
     ):
         if self.qh9:
-            return self._criterion_qh9(outputs, target, loss_weights)
+            return self._criterion_qh9(outputs, target, loss_weights, use_t_scale)
         else:
             return self._criterion(
                 outputs, target, loss_weights, use_t_scale, use_mse_and_mae
             )
+
+    @staticmethod
+    def _criterion_qh9(outputs, target, loss_weights, use_t_scale=False):
+        error_dict = {}
+        keys = loss_weights.keys()
+        # import pdb
+
+        # pdb.set_trace()
+        try:
+            for key in keys:
+                row = target.edge_index[0]
+                edge_batch = target.batch[row]
+                diff_diagonal = (
+                    outputs[f"{key}_diagonal_blocks"] - target[f"diagonal_{key}"]
+                )
+                mse_diagonal = torch.sum(
+                    diff_diagonal**2 * target[f"diagonal_{key}_mask"], dim=[1, 2]
+                )
+                mae_diagonal = torch.sum(
+                    torch.abs(diff_diagonal) * target[f"diagonal_{key}_mask"],
+                    dim=[1, 2],
+                )
+                count_sum_diagonal = torch.sum(
+                    target[f"diagonal_{key}_mask"], dim=[1, 2]
+                )
+                mse_diagonal = scatter_sum(mse_diagonal, target.batch)
+                mae_diagonal = scatter_sum(mae_diagonal, target.batch)
+                count_sum_diagonal = scatter_sum(count_sum_diagonal, target.batch)
+
+                diff_non_diagonal = (
+                    outputs[f"{key}_non_diagonal_blocks"]
+                    - target[f"non_diagonal_{key}"]
+                )
+                mse_non_diagonal = torch.sum(
+                    diff_non_diagonal**2 * target[f"non_diagonal_{key}_mask"],
+                    dim=[1, 2],
+                )
+                mae_non_diagonal = torch.sum(
+                    torch.abs(diff_non_diagonal) * target[f"non_diagonal_{key}_mask"],
+                    dim=[1, 2],
+                )
+                count_sum_non_diagonal = torch.sum(
+                    target[f"non_diagonal_{key}_mask"], dim=[1, 2]
+                )
+                mse_non_diagonal = scatter_sum(mse_non_diagonal, edge_batch)
+                mae_non_diagonal = scatter_sum(mae_non_diagonal, edge_batch)
+                count_sum_non_diagonal = scatter_sum(count_sum_non_diagonal, edge_batch)
+
+                mae = (
+                    (mae_diagonal + mae_non_diagonal)
+                    / (count_sum_diagonal + count_sum_non_diagonal)
+                ).mean()
+                mse = (
+                    (mse_diagonal + mse_non_diagonal)
+                    / (count_sum_diagonal + count_sum_non_diagonal)
+                ).mean()
+
+                error_dict[key + "_mae"] = mae
+                error_dict[key + "_rmse"] = torch.sqrt(mse)
+                error_dict[key + "_diagonal_mae"] = (
+                    mae_diagonal / count_sum_diagonal
+                ).mean()
+                error_dict[key + "_non_diagonal_mae"] = (
+                    mae_non_diagonal / count_sum_non_diagonal
+                ).mean()
+
+                loss = mae + mse
+                if loss.isnan():
+                    logger.error(f"loss is nan for {key}")
+                    loss = torch.tensor(0.0).to(loss.device)
+                    loss.requires_grad = True
+
+                if use_t_scale:
+                    scale = 1 / (1 - torch.min(target.t, torch.tensor(0.9))) ** 2
+                    loss = loss * scale
+
+                error_dict[key] = loss
+                if "loss" in error_dict.keys():
+                    error_dict["loss"] = error_dict["loss"] + loss_weights[key] * loss
+                else:
+                    error_dict["loss"] = loss_weights[key] * loss
+        except Exception as exc:
+            raise exc
+        return error_dict
 
     @staticmethod
     def _criterion(
@@ -219,7 +305,7 @@ class LitModel_flow(LitModel):
             if key == "hamiltonian":
                 diff = outputs[key] - target[key]
                 if use_t_scale:
-                    scale = 1 - torch.min(target.t, torch.tensor(0.9))
+                    scale = 1 / (1 - torch.min(target.t, torch.tensor(0.9))) ** 2
 
             elif key == "waloss":
                 diff = outputs["hamiltonian"].bmm(target.orbital_coefficients)
@@ -362,12 +448,29 @@ class LitModel_flow(LitModel):
         )
         loss = errors["loss"]
         self._log_error(errors, "test")
-        if loss < self.error_threshold:
-            self._log_sample_error(batch_one, "test", num_timesteps=1, post_fix="_1")
-            self._log_sample_error(batch_one, "test", num_timesteps=2, post_fix="_2")
-            self._log_sample_error(
-                batch_one, "test", num_timesteps=self.num_ode_steps_inf
-            )
+        if self.qh9:
+            assert self.test_batch_size == 1
+            if loss < self.error_threshold:
+                self._log_sample_error_test(
+                    batch_one, "test_fix", num_timesteps=1, post_fix="_1"
+                )
+                self._log_sample_error_test(
+                    batch_one, "test_fix", num_timesteps=2, post_fix="_2"
+                )
+                self._log_sample_error_test(
+                    batch_one, "test_fix", num_timesteps=self.num_ode_steps_inf
+                )
+        else:
+            if loss < self.error_threshold:
+                self._log_sample_error(
+                    batch_one, "test", num_timesteps=1, post_fix="_1"
+                )
+                self._log_sample_error(
+                    batch_one, "test", num_timesteps=2, post_fix="_2"
+                )
+                self._log_sample_error(
+                    batch_one, "test", num_timesteps=self.num_ode_steps_inf
+                )
         return errors
 
     def sample(
@@ -467,6 +570,7 @@ class LitModel_flow(LitModel):
                     on_step=True,
                     on_epoch=True,
                     sync_dist=True,
+                    batch_size=self.batch_size,
                 )
             else:
                 self.log(
@@ -476,6 +580,7 @@ class LitModel_flow(LitModel):
                     on_epoch=True,
                     prog_bar=True if key == "loss" else False,
                     sync_dist=True,
+                    batch_size=self.batch_size,
                 )
 
     def _log_sample_error(self, batch_one, prefix, num_timesteps=1, post_fix=""):
@@ -490,6 +595,24 @@ class LitModel_flow(LitModel):
                     on_epoch=True,
                     prog_bar=True if key == "loss" else False,
                     sync_dist=True,
+                    batch_size=self.batch_size,
+                )
+        except Exception as e:
+            logger.error(f"Error in logging sample error: {e}")
+
+    def _log_sample_error_test(self, batch_one, prefix, num_timesteps=1, post_fix=""):
+        try:
+            sample, traj, pred = self.sample(batch_one, num_timesteps=num_timesteps)
+            error_dicts = self.test_criterion_qh9_fixed(sample, batch_one)
+            for key in error_dicts.keys():
+                self.log(
+                    f"{prefix}/{key}{post_fix}",
+                    error_dicts[key],
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=True if key == "loss" else False,
+                    sync_dist=True,
+                    batch_size=self.test_batch_size,
                 )
         except Exception as e:
             logger.error(f"Error in logging sample error: {e}")
@@ -578,20 +701,86 @@ class LitModel_flow(LitModel):
         logger.info(f"num ode steps: {self.num_ode_steps_inf}")
         return total_error_dict, last_traj
 
+    # def test_over_dataset_qh9(self, test_data_loader, default_type):
+    #     self.eval()
+    #     total_error_dict = {"total_items": 0}
+    #     loss_weights = {
+    #         "hamiltonian": 1.0,
+    #         "orbital_energies": 1.0,
+    #         "orbital_coefficients": 1.0,
+    #     }
+    #     total_time = 0
+    #     total_graph = 0
+    #     # total_traj = []
+    #     last_traj = []
+    #     logger.info(f"num test data: {len(test_data_loader)}")
+    #     logger.info(f"num ode steps: {self.num_ode_steps_inf}")
+    #     for idx, batch in tqdm(enumerate(test_data_loader)):
+    #         batch = self.post_processing(batch, default_type)
+    #         batch = batch.to(self.model.device)
+    #         tic = time.time()
+    #         # ham = batch.hamiltonian.cpu()
+    #         outputs, traj, _ = self.sample(
+    #             batch,
+    #             num_timesteps=self.num_ode_steps_inf,
+    #             sample_random=self.sample_random,
+    #         )
+    #         # outputs = self(batch, batch.init_ham)
+    #         last_traj.append(traj[-1])
+
+    #         duration = time.time() - tic
+    #         total_graph = total_graph + batch.ptr.shape[0] - 1
+    #         total_time = duration + total_time
+    #         for key in outputs.keys():
+    #             if isinstance(outputs[key], torch.Tensor):
+    #                 outputs[key] = outputs[key].to("cpu")
+
+    #         error_dict = self._orb_and_eng_error(outputs, batch)
+
+    #         secs = duration / batch.num_graphs
+    #         msg = f"batch {idx} / [{len(test_data_loader)}] / {secs*100:.2f}(10^-2)s : "
+    #         for key in error_dict.keys():
+    #             if key == "hamiltonian" or key == "orbital_energies":
+    #                 msg += f"{key}: {error_dict[key]*1e6:.3f}(10^-6), "
+    #             elif key == "orbital_coefficients":
+    #                 msg += f"{key}: {error_dict[key]*1e2:.4f}(10^-2)"
+    #             else:
+    #                 msg += f"{key}: {error_dict[key]:.8f}, "
+
+    #             if key in total_error_dict.keys():
+    #                 total_error_dict[key] += error_dict[key].item() * batch.num_graphs
+    #             else:
+    #                 total_error_dict[key] = error_dict[key].item() * batch.num_graphs
+    #         logger.info(msg)
+    #         total_error_dict["total_items"] += batch.num_graphs
+    #     for key in total_error_dict.keys():
+    #         if key != "total_items":
+    #             total_error_dict[key] = (
+    #                 total_error_dict[key] / total_error_dict["total_items"]
+    #             )
+    #     last_traj = torch.cat(last_traj, dim=0)
+    #     logger.info(f"num ode steps: {self.num_ode_steps_inf}")
+    #     return total_error_dict, last_traj
+
+    @torch.no_grad()
     def test_over_dataset_qh9(self, test_data_loader, default_type):
         self.eval()
         total_error_dict = {"total_items": 0}
         loss_weights = {
             "hamiltonian": 1.0,
+            "diagonal_hamiltonian": 1.0,
+            "non_diagonal_hamiltonian": 1.0,
             "orbital_energies": 1.0,
             "orbital_coefficients": 1.0,
+            "HOMO": 1.0,
+            "LUMO": 1.0,
+            "GAP": 1.0,
         }
         total_time = 0
         total_graph = 0
         # total_traj = []
         last_traj = []
-        logger.info(f"num test data: {len(test_data_loader)}")
-        logger.info(f"num ode steps: {self.num_ode_steps_inf}")
+        logger.info("num of test data: {}".format(len(test_data_loader)))
         for idx, batch in tqdm(enumerate(test_data_loader)):
             batch = self.post_processing(batch, default_type)
             batch = batch.to(self.model.device)
@@ -602,8 +791,76 @@ class LitModel_flow(LitModel):
                 num_timesteps=self.num_ode_steps_inf,
                 sample_random=self.sample_random,
             )
-            # outputs = self(batch, batch.init_ham)
-            last_traj.append(traj[-1])
+
+            outputs = self(batch)
+            outputs["hamiltonian"] = self.model.build_final_matrix(
+                batch,
+                outputs["hamiltonian_diagonal_blocks"],
+                outputs["hamiltonian_non_diagonal_blocks"],
+            ).cpu()
+            batch.hamiltonian = self.model.build_final_matrix(
+                batch, batch[0].diagonal_hamiltonian, batch[0].non_diagonal_hamiltonian
+            ).cpu()
+            outputs["hamiltonian"] = outputs["hamiltonian"].type(torch.float64)
+            outputs["hamiltonian"] = self.matrix_transform(
+                outputs["hamiltonian"],
+                batch.atoms.cpu().squeeze().numpy(),
+                convention="back2pyscf",
+            )
+
+            last_traj.append(outputs["hamiltonian"])
+
+            batch.hamiltonian = batch.hamiltonian.type(torch.float64)
+            batch.hamiltonian = self.matrix_transform(
+                batch.hamiltonian,
+                batch.atoms.cpu().squeeze().numpy(),
+                convention="back2pyscf",
+            )
+            overlap = self.model.build_final_matrix(
+                batch, batch[0].diagonal_overlap, batch[0].non_diagonal_overlap
+            ).cpu()
+
+            overlap = overlap.type(torch.float64)
+            overlap = self.matrix_transform(
+                overlap, batch.atoms.cpu().squeeze().numpy(), convention="back2pyscf"
+            )
+
+            outputs["orbital_energies"], outputs["orbital_coefficients"] = (
+                self.cal_orbital_and_energies(overlap, outputs["hamiltonian"])
+            )
+            batch.orbital_energies, batch.orbital_coefficients = (
+                self.cal_orbital_and_energies(overlap, batch["hamiltonian"])
+            )
+
+            num_orb = int(batch.atoms[batch.ptr[0] : batch.ptr[1]].sum() / 2)
+            pred_HOMO = outputs["orbital_energies"][:, num_orb - 1]
+            gt_HOMO = batch.orbital_energies[:, num_orb - 1]
+            pred_LUMO = outputs["orbital_energies"][:, num_orb]
+            gt_LUMO = batch.orbital_energies[:, num_orb]
+            outputs["HOMO"], outputs["LUMO"], outputs["GAP"] = (
+                pred_HOMO,
+                pred_LUMO,
+                pred_LUMO - pred_HOMO,
+            )
+            batch.HOMO, batch.LUMO, batch.GAP = gt_HOMO, gt_LUMO, gt_LUMO - gt_HOMO
+
+            (
+                outputs["orbital_energies"],
+                outputs["orbital_coefficients"],
+                batch.orbital_energies,
+                batch.orbital_coefficients,
+            ) = (
+                outputs["orbital_energies"][:, :num_orb],
+                outputs["orbital_coefficients"][:, :, :num_orb],
+                batch.orbital_energies[:, :num_orb],
+                batch.orbital_coefficients[:, :, :num_orb],
+            )
+
+            outputs["diagonal_hamiltonian"], outputs["non_diagonal_hamiltonian"] = (
+                outputs["hamiltonian_diagonal_blocks"],
+                outputs["hamiltonian_non_diagonal_blocks"],
+            )
+            error_dict = self._criterion_test(outputs, batch, loss_weights)
 
             duration = time.time() - tic
             total_graph = total_graph + batch.ptr.shape[0] - 1
@@ -612,12 +869,19 @@ class LitModel_flow(LitModel):
                 if isinstance(outputs[key], torch.Tensor):
                     outputs[key] = outputs[key].to("cpu")
 
-            error_dict = self._orb_and_eng_error(outputs, batch)
-
-            secs = duration / batch.num_graphs
-            msg = f"batch {idx} / [{len(test_data_loader)}] / {secs*100:.2f}(10^-2)s : "
+            secs = duration / batch.hamiltonian.shape[0]
+            msg = f"batch {idx} / {secs*100:.2f}(10^-2)s : "
             for key in error_dict.keys():
-                if key == "hamiltonian" or key == "orbital_energies":
+                # if key == "hamiltonian" or key == "orbital_energies":
+                if key in [
+                    "hamiltonian",
+                    "orbital_energies",
+                    "non_diagonal_hamiltonian_mae",
+                    "diagonal_hamiltonian_mae",
+                    "HOMO",
+                    "LUMO",
+                    "GAP",
+                ]:
                     msg += f"{key}: {error_dict[key]*1e6:.3f}(10^-6), "
                 elif key == "orbital_coefficients":
                     msg += f"{key}: {error_dict[key]*1e2:.4f}(10^-2)"
@@ -625,16 +889,19 @@ class LitModel_flow(LitModel):
                     msg += f"{key}: {error_dict[key]:.8f}, "
 
                 if key in total_error_dict.keys():
-                    total_error_dict[key] += error_dict[key].item() * batch.num_graphs
+                    total_error_dict[key] += (
+                        error_dict[key].item() * batch.hamiltonian.shape[0]
+                    )
                 else:
-                    total_error_dict[key] = error_dict[key].item() * batch.num_graphs
+                    total_error_dict[key] = (
+                        error_dict[key].item() * batch.hamiltonian.shape[0]
+                    )
             logger.info(msg)
-            total_error_dict["total_items"] += batch.num_graphs
+            total_error_dict["total_items"] += batch.hamiltonian.shape[0]
         for key in total_error_dict.keys():
             if key != "total_items":
                 total_error_dict[key] = (
                     total_error_dict[key] / total_error_dict["total_items"]
                 )
         last_traj = torch.cat(last_traj, dim=0)
-        logger.info(f"num ode steps: {self.num_ode_steps_inf}")
         return total_error_dict, last_traj

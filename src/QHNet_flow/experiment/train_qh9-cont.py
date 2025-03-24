@@ -9,6 +9,7 @@ import subprocess
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.plugins import environments
 from torch_geometric.loader import DataLoader
 
 # from ori_dataset_traj import MD17_DFT_trajectory, random_split, get_mask
@@ -28,6 +29,10 @@ import warnings
 import omegaconf
 
 logger = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore")
+
+global output_dir
 
 
 @hydra.main(config_path="../config_qh9", config_name="config")
@@ -66,6 +71,9 @@ def main(conf):
         )
     train_dataset = dataset[dataset.train_mask]
     valid_dataset = dataset[dataset.val_mask]
+    if getattr(conf, "partial_val", None) is not None:
+        assert conf.partial_val > 0 and conf.partial_val <= 1
+        valid_dataset = valid_dataset[: int(len(valid_dataset) * conf.partial_val)]
     test_dataset = dataset[dataset.test_mask]
 
     train_loader = DataLoader(
@@ -97,10 +105,58 @@ def main(conf):
     lit_model = pl_model_cls(conf)
 
     mode = getattr(conf, "mode", "train")
+
+    # def get_ckpt(mode, conf):
+    #     run_id = None
+    #     resume = "allow"
+    #     if mode in ["train", "test"]:
+    #         if (output_dir / "wandb" / "latest-run").exists():
+    #             run_id = [
+    #                 file.name
+    #                 for file in (output_dir / "wandb" / "latest-run").iterdir()
+    #                 if "wandb" in file.name
+    #             ][0][4:12]
+    #             resume = "must"
+    #         elif conf.wandb.run_id is not None and conf.wandb.run_id != "":
+    #             run_id = conf.wandb.run_id
+
+    #         if run_id is not None:
+    #             ckpt_path = output_dir / conf.wandb.project / run_id / "checkpoints"
+    #             ckpt_path_list = list(ckpt_path.glob("*.ckpt"))
+    #             ckpt_path_list = [
+    #                 path for path in ckpt_path_list if "best" in path.stem
+    #             ]
+    #             ckpt_path_list = sorted(
+    #                 ckpt_path_list, key=lambda x: int(x.stem.split("=")[1])
+    #             )
+    #             if len(ckpt_path_list) == 0:
+    #                 ckpt_path = None
+    #             else:
+    #                 ckpt_path = ckpt_path_list[-1]
+    #             logger.info(f"Checkpoint path: {ckpt_path}")
+
+    #         return run_id, resume, ckpt_path
+
+    #     elif mode == "eval":
+    #         ckpt_path = output_dir / conf.wandb.project
+    #         ckpt_path_list = list(ckpt_path.glob("**/*.ckpt"))
+    #         ckpt_path_list = [path for path in ckpt_path_list if "best" in path.stem]
+    #         ckpt_path_list = sorted(
+    #             ckpt_path_list, key=lambda x: int(x.stem.split("=")[1])
+    #         )
+    #         if len(ckpt_path_list) == 0:
+    #             ckpt_path = None
+    #         else:
+    #             ckpt_path = ckpt_path_list[-1]
+    #         logger.info(f"Checkpoint path: {ckpt_path}")
+
+    #         return ckpt_path
+
     assert mode in ["train", "test", "eval"]
-    if mode == "train":
+    if mode in ["train", "test"]:
         # Initialize the wandb logger.
         os.makedirs(output_dir / "wandb", exist_ok=True)
+
         run_id = None
         ckpt_path = conf.continune_ckpt
         resume = "allow"
@@ -126,7 +182,6 @@ def main(conf):
                 ckpt_path = None
             else:
                 ckpt_path = ckpt_path_list[-1]
-
         wandb_logger = WandbLogger(
             project=conf.wandb.project,
             name=conf.wandb.run_name,
@@ -147,7 +202,7 @@ def main(conf):
             ModelCheckpoint(
                 monitor="val/loss",
                 mode="min",
-                save_top_k=1,
+                save_top_k=-1,
                 save_last=True,
                 filename="best-{epoch:02d}",
             )
@@ -164,7 +219,15 @@ def main(conf):
         warnings.filterwarnings("ignore")
 
         # Warmup training for Real_QHNet which is unstable
-        if conf.model.version.lower() == "Real_QHNet".lower():
+        if (
+            conf.model.version.lower() == "Real_QHNet".lower()
+            and run_id is None
+            and mode != "test"
+        ):
+            logger.info("Warmup training for Real_QHNet")
+            real_lr = conf.dataset.learning_rate
+            warmup_lr = 1e-3
+            conf.dataset.learning_rate = warmup_lr
             warmup_trainer = pl.Trainer(
                 max_steps=conf.warmup_step,
                 logger=wandb_logger,
@@ -188,6 +251,7 @@ def main(conf):
                 lit_model,
                 train_dataloaders=train_loader_warmup,
             )
+            conf.dataset.learning_rate = real_lr
 
         trainer = pl.Trainer(
             max_steps=conf.num_training_steps,
@@ -203,27 +267,53 @@ def main(conf):
             gradient_clip_val=5.0,
         )
         # Start training.
-        trainer.fit(
-            lit_model,
-            train_dataloaders=train_loader,
-            val_dataloaders=val_loader,
-            ckpt_path=conf.continune_ckpt,
-        )
-        logger.info("Testing...")
-        trainer.test(lit_model, test_loader, ckpt_path="best")
+        if mode == "train":
+            trainer.fit(
+                lit_model,
+                train_dataloaders=train_loader,
+                val_dataloaders=val_loader,
+                ckpt_path=ckpt_path,
+            )
+            logger.info("Testing...")
+            trainer.test(lit_model, test_loader, ckpt_path="best")
+        elif mode == "test":
+            # Test the model.
+            trainer.test(lit_model, test_loader, ckpt_path=ckpt_path)
 
-    elif mode == "test" or mode == "eval":
-        model_ckpt = conf.model_ckpt
-        lit_model = pl_model_cls.load_from_checkpoint(model_ckpt, conf=conf)
+    elif mode == "eval":
+        ckpt_path = output_dir / conf.wandb.project
+        ckpt_path_list = list(ckpt_path.glob("**/*.ckpt"))
+        ckpt_path_list = [path for path in ckpt_path_list if "best" in path.stem]
+        ckpt_path_list = sorted(ckpt_path_list, key=lambda x: int(x.stem.split("=")[1]))
+        if len(ckpt_path_list) == 0:
+            ckpt_path = None
+        else:
+            ckpt_path = ckpt_path_list[-1]
+        logger.info(f"Checkpoint path: {ckpt_path}")
+
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=conf.dataset.num_workers,
+            pin_memory=conf.dataset.pin_memory,
+        )
+
+        lit_model = pl_model_cls.load_from_checkpoint(ckpt_path, conf=conf)
         logger.info("Model loaded")
         # Create the PyTorch Lightning Trainer.
         warnings.filterwarnings("ignore")
         logger.info("Testing...")
-        errors, h_output = lit_model.test_over_dataset(test_loader, default_type)
+        errors, h_output = lit_model.test_over_dataset_qh9(test_loader, default_type)
         msg = f"dataset {conf.dataset.dataset_name}: {errors.get('total_items')} :"
 
         for key in errors.keys():
-            if key == "hamiltonian" or key == "orbital_energies":
+            if key in [
+                "hamiltonian",
+                "orbital_energies",
+                "non_diagonal_hamiltonian",
+                "diagonal_hamiltonian",
+            ]:
                 msg += f"{key}: {errors[key]*1e6:.3f}(10^-6), "
             elif key == "orbital_coefficients":
                 msg += f"{key}: {errors[key]*1e2:.4f}(10^-2)"

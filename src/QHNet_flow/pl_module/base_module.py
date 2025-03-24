@@ -106,6 +106,9 @@ class LitModel(pl.LightningModule):
         logger.info(f"ema_start_epoch: {self.ema_start_epoch}")
         logger.info(f"qh9: {self.qh9}")
 
+        self.batch_size = conf.dataset.get("batch_size", 32)
+        self.test_batch_size = conf.dataset.get("test_batch_size", 32)
+
     def configure_optimizers(self):
         torch.set_default_dtype(self.default_type)
         if self.conf.optimizer.lower() == "AdamW".lower():
@@ -395,10 +398,10 @@ class LitModel(pl.LightningModule):
         return output
 
     def on_train_start(self):
-        self._epoch_start_time = time.time()
+        self._epoch_start_train_time = time.time()
 
     def on_train_epoch_end(self):
-        epoch_time = (time.time() - self._epoch_start_time) / 60.0
+        epoch_time = (time.time() - self._epoch_start_train_time) / 60.0
         self.log(
             "train/epoch_time_minutes",
             epoch_time,
@@ -406,7 +409,7 @@ class LitModel(pl.LightningModule):
             on_epoch=True,
             prog_bar=False,
         )
-        self._epoch_start_time = time.time()
+        self._epoch_start_train_time = time.time()
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         # Update EMA after each training batch if enabled and past the EMA start epoch.
@@ -429,14 +432,15 @@ class LitModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True if key == "loss" else False,
                 sync_dist=True,
+                batch_size=self.batch_size,
             )
         return loss
 
     def on_validation_start(self):
-        self._epoch_start_time = time.time()
+        self._epoch_start_val_time = time.time()
 
     def on_validation_epoch_end(self):
-        epoch_time = (time.time() - self._epoch_start_time) / 60.0
+        epoch_time = (time.time() - self._epoch_start_val_time) / 60.0
         self.log(
             "val/epoch_time_minutes",
             epoch_time,
@@ -444,7 +448,7 @@ class LitModel(pl.LightningModule):
             on_epoch=True,
             prog_bar=False,
         )
-        self._epoch_start_time = time.time()
+        self._epoch_start_val_time = time.time()
 
     def validation_step(self, batch, batch_idx):
         batch = self.post_processing(batch, self.default_type)
@@ -463,6 +467,7 @@ class LitModel(pl.LightningModule):
                         on_epoch=True,
                         prog_bar=True if key == "loss" else False,
                         sync_dist=True,
+                        batch_size=self.batch_size,
                     )
                 ema_orb_and_eng_error = self._orb_and_eng_error(ema_outputs, batch)
                 for key in ema_orb_and_eng_error.keys():
@@ -473,6 +478,7 @@ class LitModel(pl.LightningModule):
                         on_epoch=True,
                         prog_bar=True if key == "loss" else False,
                         sync_dist=True,
+                        batch_size=self.batch_size,
                     )
         outputs = self(batch)
         errors = self.criterion(outputs, batch, loss_weights=self.loss_weights)
@@ -485,6 +491,7 @@ class LitModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True if key == "loss" else False,
                 sync_dist=True,
+                batch_size=self.batch_size,
             )
         orb_and_eng_error = self._orb_and_eng_error(outputs, batch)
         for key in orb_and_eng_error.keys():
@@ -495,14 +502,15 @@ class LitModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True if key == "loss" else False,
                 sync_dist=True,
+                batch_size=self.batch_size,
             )
         return errors
 
     def on_test_start(self):
-        self._epoch_start_time = time.time()
+        self._epoch_start_test_time = time.time()
 
     def on_test_epoch_end(self):
-        epoch_time = (time.time() - self._epoch_start_time) / 60.0
+        epoch_time = (time.time() - self._epoch_start_test_time) / 60.0
         self.log(
             "test/epoch_time_minutes",
             epoch_time,
@@ -510,7 +518,7 @@ class LitModel(pl.LightningModule):
             on_epoch=True,
             prog_bar=False,
         )
-        self._epoch_start_time = time.time()
+        self._epoch_start_test_time = time.time()
 
     def test_step(self, batch, batch_idx):
         batch = self.post_processing(batch, self.default_type)
@@ -525,17 +533,33 @@ class LitModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 sync_dist=True,
+                batch_size=self.test_batch_size,
             )
-        orb_and_eng_error = self._orb_and_eng_error(outputs, batch)
-        for key in orb_and_eng_error.keys():
-            self.log(
-                f"test/{key}",
-                orb_and_eng_error[key],
-                on_step=True,
-                on_epoch=True,
-                prog_bar=False,
-                sync_dist=True,
-            )
+        if self.qh9:
+            assert self.test_batch_size == 1
+            error_dicts = self.test_criterion_qh9_fixed(outputs, batch)
+            for key in error_dicts.keys():
+                self.log(
+                    f"test_fix/{key}",
+                    error_dicts[key],
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=False,
+                    sync_dist=True,
+                    batch_size=1,
+                )
+        else:
+            orb_and_eng_error = self._orb_and_eng_error(outputs, batch)
+            for key in orb_and_eng_error.keys():
+                self.log(
+                    f"test/{key}",
+                    orb_and_eng_error[key],
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=False,
+                    sync_dist=True,
+                    batch_size=self.test_batch_size,
+                )
         return errors
 
     def matrix_transform(self, hamiltonian, atoms, convention="pyscf_def2svp"):
@@ -629,13 +653,13 @@ class LitModel(pl.LightningModule):
         if self.qh9:
             try:
                 out_ham = self.build_final_matrix(
-                    _target,
+                    target,
                     outputs["hamiltonian_diagonal_blocks"],
                     outputs["hamiltonian_non_diagonal_blocks"],
                     transform=True,
                 )
                 target_ham = self.build_final_matrix(
-                    _target,
+                    target,
                     target["diagonal_hamiltonian"],
                     target["non_diagonal_hamiltonian"],
                     transform=True,
@@ -663,20 +687,14 @@ class LitModel(pl.LightningModule):
                 targets_orb_energy, targets_orb_coeff = [], []
                 ovlp_start = 0
                 ovlp_fin = 0
-
-                error_dict = {
-                    "orbital_energies": 0,
-                    "orbital_coefficients": 0,
-                    "hamiltonian": 0,
-                }
                 for i in range(len(out_ham)):
                     out_ham[i] = out_ham[i].type(self.default_type)
                     target_ham[i] = target_ham[i].type(self.default_type)
-                    overlap_dim = _target.overlap_dim[i].item()
+                    overlap_dim = target.overlap_dim[i].item()
                     ovlp_start = ovlp_fin
                     ovlp_fin += overlap_dim**2
                     overlap_cur = (
-                        _target.overlap[ovlp_start:ovlp_fin]
+                        target.overlap[ovlp_start:ovlp_fin]
                         .reshape(overlap_dim, overlap_dim)
                         .unsqueeze(0)
                     ).type(self.default_type)
@@ -692,10 +710,16 @@ class LitModel(pl.LightningModule):
                     targets_orb_energy.append(target_energy)
                     targets_orb_coeff.append(target_orb)
 
+                    # pred_HOMO = outputs['orbital_energies'][:, num_orb-1]
+                    # gt_HOMO = batch.orbital_energies[:, num_orb-1]
+                    # pred_LUMO = outputs['orbital_energies'][:, num_orb]
+                    # gt_LUMO = batch.orbital_energies[:, num_orb]
                 error_dict = self.criterion_test_qh9(
+                    outputs,
                     out_ham,
                     outputs_orb_energy,
                     outputs_orb_coeff,
+                    target,
                     target_ham,
                     targets_orb_energy,
                     targets_orb_coeff,
@@ -735,7 +759,7 @@ class LitModel(pl.LightningModule):
                 target.orbital_energies[:, :num_orb],
                 target.orbital_coefficients[:, :, :num_orb],
             )
-            error_dict = self.criterion_test(outputs, target, loss_weights)
+            error_dict = self._criterion_test(outputs, target, loss_weights)
 
         return {
             "orbital_energies": error_dict["orbital_energies"],
@@ -743,8 +767,91 @@ class LitModel(pl.LightningModule):
             "sample_hamiltonian": error_dict["hamiltonian"],
         }
 
+    def test_criterion_qh9_fixed(self, _outputs, _target):
+        loss_weights = {
+            "hamiltonian": 1.0,
+            "diagonal_hamiltonian": 1.0,
+            "non_diagonal_hamiltonian": 1.0,
+            "orbital_energies": 1.0,
+            "orbital_coefficients": 1.0,
+            "HOMO": 1.0,
+            "LUMO": 1.0,
+            "GAP": 1.0,
+        }
+        ## batch size should be 1
+        outputs = _outputs
+        batch = _target.clone()
+        outputs["hamiltonian"] = self.model.build_final_matrix(
+            batch,
+            outputs["hamiltonian_diagonal_blocks"],
+            outputs["hamiltonian_non_diagonal_blocks"],
+        ).cpu()
+        batch.hamiltonian = self.model.build_final_matrix(
+            batch, batch[0].diagonal_hamiltonian, batch[0].non_diagonal_hamiltonian
+        ).cpu()
+        outputs["hamiltonian"] = outputs["hamiltonian"].type(torch.float64)
+        outputs["hamiltonian"] = self.matrix_transform(
+            outputs["hamiltonian"],
+            batch.atoms.cpu().squeeze().numpy(),
+            convention="back2pyscf",
+        )
+
+        batch.hamiltonian = batch.hamiltonian.type(torch.float64)
+        batch.hamiltonian = self.matrix_transform(
+            batch.hamiltonian,
+            batch.atoms.cpu().squeeze().numpy(),
+            convention="back2pyscf",
+        )
+        overlap = self.model.build_final_matrix(
+            batch, batch[0].diagonal_overlap, batch[0].non_diagonal_overlap
+        ).cpu()
+
+        overlap = overlap.type(torch.float64)
+        overlap = self.matrix_transform(
+            overlap, batch.atoms.cpu().squeeze().numpy(), convention="back2pyscf"
+        )
+
+        outputs["orbital_energies"], outputs["orbital_coefficients"] = (
+            self.cal_orbital_and_energies(overlap, outputs["hamiltonian"])
+        )
+        batch.orbital_energies, batch.orbital_coefficients = (
+            self.cal_orbital_and_energies(overlap, batch["hamiltonian"])
+        )
+
+        num_orb = int(batch.atoms[batch.ptr[0] : batch.ptr[1]].sum() / 2)
+        pred_HOMO = outputs["orbital_energies"][:, num_orb - 1]
+        gt_HOMO = batch.orbital_energies[:, num_orb - 1]
+        pred_LUMO = outputs["orbital_energies"][:, num_orb]
+        gt_LUMO = batch.orbital_energies[:, num_orb]
+        outputs["HOMO"], outputs["LUMO"], outputs["GAP"] = (
+            pred_HOMO,
+            pred_LUMO,
+            pred_LUMO - pred_HOMO,
+        )
+        batch.HOMO, batch.LUMO, batch.GAP = gt_HOMO, gt_LUMO, gt_LUMO - gt_HOMO
+
+        (
+            outputs["orbital_energies"],
+            outputs["orbital_coefficients"],
+            batch.orbital_energies,
+            batch.orbital_coefficients,
+        ) = (
+            outputs["orbital_energies"][:, :num_orb],
+            outputs["orbital_coefficients"][:, :, :num_orb],
+            batch.orbital_energies[:, :num_orb],
+            batch.orbital_coefficients[:, :, :num_orb],
+        )
+
+        outputs["diagonal_hamiltonian"], outputs["non_diagonal_hamiltonian"] = (
+            outputs["hamiltonian_diagonal_blocks"],
+            outputs["hamiltonian_non_diagonal_blocks"],
+        )
+        error_dict = self._criterion_test(outputs, batch, loss_weights)
+
+        return error_dict
+
     @staticmethod
-    def criterion_test(outputs, target, names):
+    def criterion_test_qh9_old(outputs, target, names):
         error_dict = {}
         for key in names:
             if key == "orbital_coefficients":
@@ -759,19 +866,25 @@ class LitModel(pl.LightningModule):
                 error_dict[key] = mae
         return error_dict
 
+    @staticmethod
     def criterion_test_qh9(
-        self,
+        outputs,
         outputs_ham,
         outputs_energy,
         outputs_coeff,
+        target,
         target_ham,
         target_energy,
         target_coeff,
     ):
-        error_dict = {}
+        # error_dict = {}
         orb_coeff_error = 0
         orb_energy_error = 0
         ham_error = 0
+        ham_error_2 = 0
+        diag_ham_error = 0
+        non_diag_ham_error = 0
+
         for i in range(len(outputs_ham)):
             ham_error += torch.mean(torch.abs(outputs_ham[i] - target_ham[i]))
             orb_energy_error += torch.mean(
@@ -782,6 +895,52 @@ class LitModel(pl.LightningModule):
                 .abs()
                 .mean()
             )
+
+        row = target.edge_index[0]
+        edge_batch = target.batch[row]
+        diff_diagonal = (
+            outputs[f"hamiltonian_diagonal_blocks"] - target[f"diagonal_hamiltonian"]
+        )
+        mse_diagonal = torch.sum(
+            diff_diagonal**2 * target[f"diagonal_hamiltonian_mask"], dim=[1, 2]
+        )
+        mae_diagonal = torch.sum(
+            torch.abs(diff_diagonal) * target[f"diagonal_hamiltonian_mask"],
+            dim=[1, 2],
+        )
+        count_sum_diagonal = torch.sum(target[f"diagonal_hamiltonian_mask"], dim=[1, 2])
+        mse_diagonal = scatter_sum(mse_diagonal, target.batch)
+        mae_diagonal = scatter_sum(mae_diagonal, target.batch)
+        count_sum_diagonal = scatter_sum(count_sum_diagonal, target.batch)
+
+        diff_non_diagonal = (
+            outputs[f"hamiltonian_non_diagonal_blocks"]
+            - target[f"non_diagonal_hamiltonian"]
+        )
+        mse_non_diagonal = torch.sum(
+            diff_non_diagonal**2 * target[f"non_diagonal_hamiltonian_mask"],
+            dim=[1, 2],
+        )
+        mae_non_diagonal = torch.sum(
+            torch.abs(diff_non_diagonal) * target[f"non_diagonal_hamiltonian_mask"],
+            dim=[1, 2],
+        )
+        count_sum_non_diagonal = torch.sum(
+            target[f"non_diagonal_hamiltonian_mask"], dim=[1, 2]
+        )
+        mse_non_diagonal = scatter_sum(mse_non_diagonal, edge_batch)
+        mae_non_diagonal = scatter_sum(mae_non_diagonal, edge_batch)
+        count_sum_non_diagonal = scatter_sum(count_sum_non_diagonal, edge_batch)
+
+        mae = (
+            (mae_diagonal + mae_non_diagonal)
+            / (count_sum_diagonal + count_sum_non_diagonal)
+        ).mean()
+
+        ham_error_2 = mae
+        diag_ham_error = (mae_diagonal / count_sum_diagonal).mean()
+        non_diag_ham_error = (mae_non_diagonal / count_sum_non_diagonal).mean()
+
         ham_error /= len(outputs_ham)
         orb_energy_error /= len(outputs_ham)
         orb_coeff_error /= len(outputs_ham)
@@ -789,6 +948,9 @@ class LitModel(pl.LightningModule):
             "orbital_energies": orb_energy_error,
             "orbital_coefficients": orb_coeff_error,
             "hamiltonian": ham_error,
+            "hamiltonian_2": ham_error_2,
+            "diag_ham": diag_ham_error,
+            "non_diag_ham": non_diag_ham_error,
         }
 
     @torch.no_grad()
@@ -841,11 +1003,181 @@ class LitModel(pl.LightningModule):
                 batch.orbital_energies[:, :num_orb],
                 batch.orbital_coefficients[:, :, :num_orb],
             )
-            error_dict = self.criterion_test(outputs, batch, loss_weights)
+            error_dict = self._criterion_test(outputs, batch, loss_weights)
             secs = duration / batch.hamiltonian.shape[0]
             msg = f"batch {idx} / {secs*100:.2f}(10^-2)s : "
             for key in error_dict.keys():
                 if key == "hamiltonian" or key == "orbital_energies":
+                    msg += f"{key}: {error_dict[key]*1e6:.3f}(10^-6), "
+                elif key == "orbital_coefficients":
+                    msg += f"{key}: {error_dict[key]*1e2:.4f}(10^-2)"
+                else:
+                    msg += f"{key}: {error_dict[key]:.8f}, "
+
+                if key in total_error_dict.keys():
+                    total_error_dict[key] += (
+                        error_dict[key].item() * batch.hamiltonian.shape[0]
+                    )
+                else:
+                    total_error_dict[key] = (
+                        error_dict[key].item() * batch.hamiltonian.shape[0]
+                    )
+            logger.info(msg)
+            total_error_dict["total_items"] += batch.hamiltonian.shape[0]
+        for key in total_error_dict.keys():
+            if key != "total_items":
+                total_error_dict[key] = (
+                    total_error_dict[key] / total_error_dict["total_items"]
+                )
+        last_traj = torch.cat(last_traj, dim=0)
+        return total_error_dict, last_traj
+
+    @staticmethod
+    def _criterion_test(outputs, target, names):
+        error_dict = {}
+        for key in names:
+            if key == "orbital_coefficients":
+                "The shape if [batch, total_orb, num_occ_orb]."
+                error_dict[key] = (
+                    torch.cosine_similarity(outputs[key], target[key], dim=1)
+                    .abs()
+                    .mean()
+                )
+            elif key in ["diagonal_hamiltonian", "non_diagonal_hamiltonian"]:
+                diff_blocks = outputs[key] - target[key]
+                mae_blocks = torch.sum(
+                    torch.abs(diff_blocks) * target[f"{key}_mask"], dim=[1, 2]
+                )
+                count_sum_blocks = torch.sum(target[f"{key}_mask"], dim=[1, 2])
+                if key == "non_diagonal_hamiltonian":
+                    row = target.edge_index_full[0]
+                    batch = target.batch[row]
+                else:
+                    batch = target.batch
+                mae_blocks = scatter_sum(mae_blocks, batch)
+                count_sum_blocks = scatter_sum(count_sum_blocks, batch)
+                error_dict[key + "_mae"] = (mae_blocks / count_sum_blocks).mean()
+            else:
+                diff = outputs[key] - target[key]
+                mae = torch.mean(torch.abs(diff))
+                error_dict[key] = mae
+        return error_dict
+
+    @torch.no_grad()
+    def test_over_dataset_qh9(self, test_data_loader, default_type):
+        self.eval()
+        total_error_dict = {"total_items": 0}
+        loss_weights = {
+            "hamiltonian": 1.0,
+            "diagonal_hamiltonian": 1.0,
+            "non_diagonal_hamiltonian": 1.0,
+            "orbital_energies": 1.0,
+            "orbital_coefficients": 1.0,
+            "HOMO": 1.0,
+            "LUMO": 1.0,
+            "GAP": 1.0,
+        }
+        total_time = 0
+        total_graph = 0
+        # total_traj = []
+        last_traj = []
+        logger.info("num of test data: {}".format(len(test_data_loader)))
+        for idx, batch in tqdm(enumerate(test_data_loader)):
+            batch = self.post_processing(batch, default_type)
+            batch = batch.to(self.model.device)
+            tic = time.time()
+            # ham = batch.hamiltonian.cpu()
+            # outputs, traj, _ = self(batch)
+            outputs = self(batch)
+            outputs["hamiltonian"] = self.model.build_final_matrix(
+                batch,
+                outputs["hamiltonian_diagonal_blocks"],
+                outputs["hamiltonian_non_diagonal_blocks"],
+            ).cpu()
+            batch.hamiltonian = self.model.build_final_matrix(
+                batch, batch[0].diagonal_hamiltonian, batch[0].non_diagonal_hamiltonian
+            ).cpu()
+            outputs["hamiltonian"] = outputs["hamiltonian"].type(torch.float64)
+            outputs["hamiltonian"] = self.matrix_transform(
+                outputs["hamiltonian"],
+                batch.atoms.cpu().squeeze().numpy(),
+                convention="back2pyscf",
+            )
+
+            last_traj.append(outputs["hamiltonian"])
+
+            batch.hamiltonian = batch.hamiltonian.type(torch.float64)
+            batch.hamiltonian = self.matrix_transform(
+                batch.hamiltonian,
+                batch.atoms.cpu().squeeze().numpy(),
+                convention="back2pyscf",
+            )
+            overlap = self.model.build_final_matrix(
+                batch, batch[0].diagonal_overlap, batch[0].non_diagonal_overlap
+            ).cpu()
+
+            overlap = overlap.type(torch.float64)
+            overlap = self.matrix_transform(
+                overlap, batch.atoms.cpu().squeeze().numpy(), convention="back2pyscf"
+            )
+
+            outputs["orbital_energies"], outputs["orbital_coefficients"] = (
+                self.cal_orbital_and_energies(overlap, outputs["hamiltonian"])
+            )
+            batch.orbital_energies, batch.orbital_coefficients = (
+                self.cal_orbital_and_energies(overlap, batch["hamiltonian"])
+            )
+
+            num_orb = int(batch.atoms[batch.ptr[0] : batch.ptr[1]].sum() / 2)
+            pred_HOMO = outputs["orbital_energies"][:, num_orb - 1]
+            gt_HOMO = batch.orbital_energies[:, num_orb - 1]
+            pred_LUMO = outputs["orbital_energies"][:, num_orb]
+            gt_LUMO = batch.orbital_energies[:, num_orb]
+            outputs["HOMO"], outputs["LUMO"], outputs["GAP"] = (
+                pred_HOMO,
+                pred_LUMO,
+                pred_LUMO - pred_HOMO,
+            )
+            batch.HOMO, batch.LUMO, batch.GAP = gt_HOMO, gt_LUMO, gt_LUMO - gt_HOMO
+
+            (
+                outputs["orbital_energies"],
+                outputs["orbital_coefficients"],
+                batch.orbital_energies,
+                batch.orbital_coefficients,
+            ) = (
+                outputs["orbital_energies"][:, :num_orb],
+                outputs["orbital_coefficients"][:, :, :num_orb],
+                batch.orbital_energies[:, :num_orb],
+                batch.orbital_coefficients[:, :, :num_orb],
+            )
+
+            outputs["diagonal_hamiltonian"], outputs["non_diagonal_hamiltonian"] = (
+                outputs["hamiltonian_diagonal_blocks"],
+                outputs["hamiltonian_non_diagonal_blocks"],
+            )
+            error_dict = self._criterion_test(outputs, batch, loss_weights)
+
+            duration = time.time() - tic
+            total_graph = total_graph + batch.ptr.shape[0] - 1
+            total_time = duration + total_time
+            for key in outputs.keys():
+                if isinstance(outputs[key], torch.Tensor):
+                    outputs[key] = outputs[key].to("cpu")
+
+            secs = duration / batch.hamiltonian.shape[0]
+            msg = f"batch {idx} / {secs*100:.2f}(10^-2)s : "
+            for key in error_dict.keys():
+                # if key == "hamiltonian" or key == "orbital_energies":
+                if key in [
+                    "hamiltonian",
+                    "orbital_energies",
+                    "non_diagonal_hamiltonian_mae",
+                    "diagonal_hamiltonian_mae",
+                    "HOMO",
+                    "LUMO",
+                    "GAP",
+                ]:
                     msg += f"{key}: {error_dict[key]*1e6:.3f}(10^-6), "
                 elif key == "orbital_coefficients":
                     msg += f"{key}: {error_dict[key]*1e2:.4f}(10^-2)"

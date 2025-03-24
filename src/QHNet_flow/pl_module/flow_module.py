@@ -169,7 +169,7 @@ class LitModel_flow(LitModel):
             if key == "hamiltonian":
                 diff = outputs[key] - target[key]
                 if use_t_scale:
-                    scale = 1 - torch.min(target.t, torch.tensor(0.9))
+                    scale = 1/(1 - torch.min(target.t, torch.tensor(0.9)))**2
 
             elif key == "waloss":
                 diff = outputs["hamiltonian"].bmm(target.orbital_coefficients)

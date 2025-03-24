@@ -200,7 +200,7 @@ class QH9Stable(InMemoryDataset):
         ovlp, init_ham = self.calc_ovlp_and_ham_init(atoms, pos)
         ori_data_dict = {
             "id": row[0],
-            'geo_id': row[1],
+            "geo_id": row[1],
             "num_nodes": row[2],
             "atoms": row[2],
             "pos": row[3],  # angstrom
@@ -546,7 +546,7 @@ class QH9Dynamic(InMemoryDataset):
         assert task in [""]
         self.version = version
         if self.version == "300k":
-            self.folder = osp.join(root, "QH9Dynamic_300k")
+            self.folder = osp.join(root, "QH9Dynamic_300k_2")
         elif self.version == "100k":
             self.folder = osp.join(root, "QH9Dynamic_100k")
         else:
@@ -673,6 +673,9 @@ class QH9Dynamic(InMemoryDataset):
                 connection = Connection(os.path.join(self.root, "raw", raw_file_name))
                 cursor = connection.cursor()
                 data = cursor.execute("select * from data").fetchall()
+                import pdb
+
+                pdb.set_trace()
                 for ind, row in enumerate(tqdm(data)):
                     atoms = np.frombuffer(row[3], np.int32)
                     pos = np.frombuffer(row[4], np.float64) / BOHR2ANG

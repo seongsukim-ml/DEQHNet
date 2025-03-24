@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: outputs/cont-${dataset.dataset_full_name}/${wandb.run_name}
+    dir: outputs/v3_cont-${dataset.dataset_full_name}/${wandb.run_name}
 
 
 defaults:
@@ -38,7 +38,7 @@ wandb:
   project: "DFT-hamiltonian_qh9"
   run_name: ${model.version}${prefix}-${dataset.dataset_full_name}-UR_${use_init_hamiltonian_residue}
   run_id: Null
-  tags: ["qh9", "base", "cont"]
+  tags: ["qh9", "base", "cont", "v3"]
   # resume: must
 
 # resume  

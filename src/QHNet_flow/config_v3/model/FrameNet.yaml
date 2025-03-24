@@ -1,0 +1,8 @@
+model_name: FrameNet
+version: FrameNet_v2
+# version: QHNet_wo_bias, QHNet_w_bias, QHNet
+
+hidden_size: 128
+radius_embed_dim: 32
+ham_hidden: 256
+num_gnn_layers: 5

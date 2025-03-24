@@ -1,13 +1,14 @@
-dataset_full_name: ${dataset.dataset_name}-${dataset.dataset_name}-${dataset.split}
+dataset_full_name: ${dataset.dataset_name}-${dataset.version}-${dataset.split}
+# dataset_full_name: ${dataset.dataset_name}-${dataset.dataset_name}-${dataset.split}
 dataset_name: QH9Dynamic
 version: 100k
 split: mol  #[geometry, mol]
 
 # batch_size: 32
-batch_size: 16
+batch_size: 32
 train_batch_size: ${dataset.batch_size}
 valid_batch_size: ${dataset.batch_size}
-test_batch_size: ${dataset.batch_size}
+test_batch_size: 1
 
 # learning_rate: 5e-4
 learning_rate: 1e-3
